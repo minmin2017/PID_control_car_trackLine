@@ -1,13 +1,15 @@
 #include <Arduino.h>
+#include <WiFi.h>
 #include "Communication_order.h"
+
 LanCommand net;
+
 // ---------------- WiFi ----------------
 const char* ssid     = "MinMin2017";
 const char* password = "minmin2017i";
 const bool wifi = true;
+
 // ================== DRV8833 PIN MAP ==================
-
-
 static const int AIN1 = 25;
 static const int AIN2 = 26;
 static const int EN   = 27;   // HIGH always
@@ -16,12 +18,11 @@ static const int BIN2 = 32;
 
 // ================== IR SENSOR PINS (4 inputs) ==================
 static const int S1 = 34; // leftmost
-static const int S2 = 35
-;
+static const int S2 = 35;
 static const int S3 = 2;
 static const int S4 = 15; // rightmost
 
-// ================== PID GAINS (TUNE) ==================
+// ================== PID GAINS ==================
 float Kp = 30.0f;
 float Ki = 50.0f;
 float Kd = 0.0f;
@@ -39,6 +40,19 @@ float integral  = 0.0f;
 float prevError = 0.0f;
 unsigned long prevMs = 0;
 
+// ================== TURN STATE MACHINE ==================
+enum RunState { FOLLOW, UTURN, RTURN };
+RunState runState = FOLLOW;
+
+unsigned long actionStartMs = 0;
+const int TURN_PWM = 150;
+const unsigned long UTURN_MS = 700; // ~180 deg (ปรับได้)
+const unsigned long RTURN_MS = 350; // ~90 deg  (ปรับได้)
+
+// กันสัญญาณแกว่ง
+int confirmLow = 0, confirmHigh = 0;
+const int CONFIRM_N = 3;
+
 // ---------- utility ----------
 static inline int clampi(int v, int lo, int hi){
   if(v < lo) return lo;
@@ -46,11 +60,9 @@ static inline int clampi(int v, int lo, int hi){
   return v;
 }
 
-// ================== MOTOR CONTROL (no ledcSetup) ==================
-// speed: -255..255 (negative = reverse)
+// ================== MOTOR CONTROL ==================
 void motorA(int speed){
   speed = clampi(speed, -255, 255);
-
   if(speed >= 0){
     analogWrite(AIN1, speed);
     analogWrite(AIN2, 0);
@@ -62,7 +74,6 @@ void motorA(int speed){
 
 void motorB(int speed){
   speed = clampi(speed, -255, 255);
-
   if(speed >= 0){
     analogWrite(BIN1, speed);
     analogWrite(BIN2, 0);
@@ -88,9 +99,6 @@ int readNorm(int pin, int idx){
 }
 
 // ================== LINE POSITION ERROR (weighted) ==================
-// weights: -3, -1, +1, +3  (left -> right)
-// assume "line gives higher value" on sensor.
-// if your black line gives LOWER value, invert: n = 1000 - n;
 float computeError(int n1, int n2, int n3, int n4){
   const float w1 = -3, w2 = -1, w3 = 1, w4 = 3;
 
@@ -109,23 +117,20 @@ void calibrate(unsigned long ms = 2000){
     (void)readNorm(S2, 1);
     (void)readNorm(S3, 2);
     (void)readNorm(S4, 3);
-    delay(5);
+    delay(5); // calibration ช่วงสั้นๆ ยอมให้มี delay ได้
   }
 }
-// delay and update
-void delay_Update(int millisec){
-  int mili = millis();
-  int goal = mili +millisec;
-  while (goal-millis() >0){
-    if (wifi) net.update();
 
+static inline void sendToClient(const char* msg){
+  if (wifi && net.hasClient()){
+    net.clientRef().println(msg);
   }
-  return;
 }
 
 // ================== SETUP ==================
 void setup(){
   Serial.begin(115200);
+
   if (wifi) {
     bool ok = net.begin(ssid, password);
     if (!ok) {
@@ -135,23 +140,17 @@ void setup(){
     Serial.print("WiFi connected, IP = ");
     Serial.println(WiFi.localIP());
   }
-  pinMode(EN, OUTPUT);
-  digitalWrite(EN, HIGH); // enable driver always
 
-  // Motor pins as output
+  pinMode(EN, OUTPUT);
+  digitalWrite(EN, HIGH);
+
   pinMode(AIN1, OUTPUT);
   pinMode(AIN2, OUTPUT);
   pinMode(BIN1, OUTPUT);
   pinMode(BIN2, OUTPUT);
 
-  // ADC config
-  analogReadResolution(12);       // 0..4095
-  analogSetAttenuation(ADC_11db); // ~0..3.3V
-
-  // PWM config (still "ธรรมดา" คือใช้ analogWrite API)
-  //(8);       // 0..255
-  // ถ้าคุณอยากให้เงียบขึ้น ลอง 20kHz (บาง core รองรับ)
-  // analogWriteFrequency(20000);
+  analogReadResolution(12);
+  analogSetAttenuation(ADC_11db);
 
   motorA(0);
   motorB(0);
@@ -161,80 +160,99 @@ void setup(){
   Serial.println("Calibration done.");
 
   prevMs = millis();
+  sendToClient("F"); // เริ่มต้นอยู่โหมดตามเส้น
 }
-bool allLow;
-bool allHigh;
-int n1;
-int n2;
-int n3;
-int n4;
-char state[] = "foward";
-// ================== LOOP ==================
 
+// ================== LOOP ==================
 void loop(){
   if (wifi) net.update();
 
+  int n1 = readNorm(S1, 0);
+  int n2 = readNorm(S2, 1);
+  int n3 = readNorm(S3, 2);
+  int n4 = readNorm(S4, 3);
 
-  n1 = readNorm(S1, 0);
-  n2 = readNorm(S2, 1);
-  n3 = readNorm(S3, 2);
-  n4 = readNorm(S4, 3);
-  allLow  = (n1>=0   && n1<=100) &&
-            (n2>=0   && n2<=100) &&
-            (n3>=0   && n3<=100) &&
-            (n4>=0   && n4<=100);
+  bool allLow  = (n1>=0   && n1<=100) &&
+                 (n2>=0   && n2<=100) &&
+                 (n3>=0   && n3<=100) &&
+                 (n4>=0   && n4<=100);
 
-  allHigh = (n1>=900 && n1<=1000) &&
-            (n2>=900 && n2<=1000) &&
-            (n3>=900 && n3<=1000) &&
-            (n4>=900 && n4<=1000);
-        
-
-  if(allLow){
-      // ====== U-TURN ======
-      state = "U turn";
-      motorA(150);
-      motorB(-150);
-      if (net.hasClient()) {
-        WiFiClient &client = net.clientRef();
-        client.println("U");   // ส่งข้อความไป client
-      }
-
-      delay_Update(700);     // ปรับเวลาให้หมุน ~180 องศา
-      return;         // ข้าม PID รอบนี้
-  }
-
-  if(allHigh){
-      // ====== TURN RIGHT ======
-      state = "Right turn";
-      motorA(150);
-      motorB(-150);
-      if (net.hasClient()) {
-        WiFiClient &client = net.clientRef();
-        client.println("R");   // ส่งข้อความไป client
-    }
-      delay_Update(350);     // ปรับเวลาให้หมุน ~90 องศา
-      return;
-  }
-
-  if (state != "forward"){
-    state= "foward";
-    client.printf("f");
-  }
-
-  // ถ้า “เส้นดำ” ทำให้ค่าน้อยลง ให้ปลดคอมเมนต์ 4 บรรทัดนี้:
-  // n1 = 1000 - n1; n2 = 1000 - n2; n3 = 1000 - n3; n4 = 1000 - n4;
-
-  float error = computeError(n1, n2, n3, n4);
+  bool allHigh = (n1>=900 && n1<=1000) &&
+                 (n2>=900 && n2<=1000) &&
+                 (n3>=900 && n3<=1000) &&
+                 (n4>=900 && n4<=1000);
 
   unsigned long now = millis();
+
+  // ================== NON-BLOCKING TURN STATE MACHINE ==================
+  switch(runState){
+
+    case FOLLOW: {
+      confirmLow  = allLow  ? (confirmLow  + 1) : 0;
+      confirmHigh = allHigh ? (confirmHigh + 1) : 0;
+
+      if(confirmLow >= CONFIRM_N){
+        runState = UTURN;
+        actionStartMs = now;
+        confirmLow = confirmHigh = 0;
+
+        motorA( TURN_PWM);
+        motorB(-TURN_PWM);
+        sendToClient("U");
+        return; // กัน PID ทับรอบนี้
+      }
+
+      if(confirmHigh >= CONFIRM_N){
+        runState = RTURN;
+        actionStartMs = now;
+        confirmLow = confirmHigh = 0;
+
+        motorA( TURN_PWM);
+        motorB(-TURN_PWM);
+        sendToClient("R");
+        return;
+      }
+
+      // ไม่เข้าเงื่อนไขพิเศษ -> ไป PID ด้านล่าง
+      break;
+    }
+
+    case UTURN: {
+      motorA( TURN_PWM);
+      motorB(-TURN_PWM);
+
+      if(now - actionStartMs >= UTURN_MS){
+        motorA(0);
+        motorB(0);
+        runState = FOLLOW;
+        sendToClient("F");
+      }
+      return; // ระหว่างหมุน ไม่ให้ PID ทับ
+    }
+
+    case RTURN: {
+      motorA( TURN_PWM);
+      motorB(-TURN_PWM);
+
+      if(now - actionStartMs >= RTURN_MS){
+        motorA(0);
+        motorB(0);
+        runState = FOLLOW;
+        sendToClient("F");
+      }
+      return;
+    }
+  }
+
+  // ================== PID FOLLOW ==================
+  float error = computeError(n1, n2, n3, n4);
+
   float dt = (now - prevMs) / 1000.0f;
   if(dt <= 0) dt = 0.001f;
   prevMs = now;
 
-  // PID
   integral += error * dt;
-  integral = constrain(integral, -1.0f, 1.0f); // anti-windup แบบง่าย
+  integral = constrain(integral, -1.0f, 1.0f);
 
   float derivative = (error - prevError) / dt;
   prevError = error;
@@ -247,7 +265,6 @@ void loop(){
   left  = clampi(left,  0, maxSpeed);
   right = clampi(right, 0, maxSpeed);
 
-  // สมมติ A=ซ้าย, B=ขวา (ถ้ากลับด้านให้สลับ motorA/motorB)
   motorA(left);
   motorB(right);
 
@@ -255,12 +272,10 @@ void loop(){
   Serial.print("N:");
   Serial.print(n1); Serial.print(",");
   Serial.print(n2); Serial.print(",");
-  Serial.print(n3); Serial.print(",");\
-  
+  Serial.print(n3); Serial.print(",");
   Serial.print(n4);
   Serial.print("  e="); Serial.print(error, 3);
   Serial.print("  corr="); Serial.print(corr, 2);
   Serial.print("  L="); Serial.print(left);
   Serial.print("  R="); Serial.println(right);
-
 }
