@@ -1,6 +1,13 @@
 #include <Arduino.h>
-
+#include "Communication_order.h"
+LanCommand net;
+// ---------------- WiFi ----------------
+const char* ssid     = "MinMin2017";
+const char* password = "minmin2017i";
+const bool wifi = true;
 // ================== DRV8833 PIN MAP ==================
+
+
 static const int AIN1 = 25;
 static const int AIN2 = 26;
 static const int EN   = 27;   // HIGH always
@@ -11,13 +18,13 @@ static const int BIN2 = 32;
 static const int S1 = 34; // leftmost
 static const int S2 = 35
 ;
-static const int S3 = 36;
-static const int S4 = 39; // rightmost
+static const int S3 = 2;
+static const int S4 = 15; // rightmost
 
 // ================== PID GAINS (TUNE) ==================
-float Kp = 25.0f;
-float Ki = 0.0f;
-float Kd = 12.0f;
+float Kp = 30.0f;
+float Ki = 50.0f;
+float Kd = 0.0f;
 
 // ================== SPEED SETTINGS ==================
 int baseSpeed = 140;     // 0..255
@@ -105,11 +112,29 @@ void calibrate(unsigned long ms = 2000){
     delay(5);
   }
 }
+// delay and update
+void delay_Update(int millisec){
+  int mili = millis();
+  int goal = mili +millisec;
+  while (goal-millis() >0){
+    if (wifi) net.update();
+
+  }
+  return;
+}
 
 // ================== SETUP ==================
 void setup(){
   Serial.begin(115200);
-
+  if (wifi) {
+    bool ok = net.begin(ssid, password);
+    if (!ok) {
+      Serial.println("WiFi failed (net.begin timeout)");
+      while (1) { delay(1000); }
+    }
+    Serial.print("WiFi connected, IP = ");
+    Serial.println(WiFi.localIP());
+  }
   pinMode(EN, OUTPUT);
   digitalWrite(EN, HIGH); // enable driver always
 
@@ -137,13 +162,65 @@ void setup(){
 
   prevMs = millis();
 }
-
+bool allLow;
+bool allHigh;
+int n1;
+int n2;
+int n3;
+int n4;
+char state[] = "foward";
 // ================== LOOP ==================
+
 void loop(){
-  int n1 = readNorm(S1, 0);
-  int n2 = readNorm(S2, 1);
-  int n3 = readNorm(S3, 2);
-  int n4 = readNorm(S4, 3);
+  if (wifi) net.update();
+
+
+  n1 = readNorm(S1, 0);
+  n2 = readNorm(S2, 1);
+  n3 = readNorm(S3, 2);
+  n4 = readNorm(S4, 3);
+  allLow  = (n1>=0   && n1<=100) &&
+            (n2>=0   && n2<=100) &&
+            (n3>=0   && n3<=100) &&
+            (n4>=0   && n4<=100);
+
+  allHigh = (n1>=900 && n1<=1000) &&
+            (n2>=900 && n2<=1000) &&
+            (n3>=900 && n3<=1000) &&
+            (n4>=900 && n4<=1000);
+        
+
+  if(allLow){
+      // ====== U-TURN ======
+      state = "U turn";
+      motorA(150);
+      motorB(-150);
+      if (net.hasClient()) {
+        WiFiClient &client = net.clientRef();
+        client.println("U");   // ส่งข้อความไป client
+      }
+
+      delay_Update(700);     // ปรับเวลาให้หมุน ~180 องศา
+      return;         // ข้าม PID รอบนี้
+  }
+
+  if(allHigh){
+      // ====== TURN RIGHT ======
+      state = "Right turn";
+      motorA(150);
+      motorB(-150);
+      if (net.hasClient()) {
+        WiFiClient &client = net.clientRef();
+        client.println("R");   // ส่งข้อความไป client
+    }
+      delay_Update(350);     // ปรับเวลาให้หมุน ~90 องศา
+      return;
+  }
+
+  if (state != "forward"){
+    state= "foward";
+    client.printf("f");
+  }
 
   // ถ้า “เส้นดำ” ทำให้ค่าน้อยลง ให้ปลดคอมเมนต์ 4 บรรทัดนี้:
   // n1 = 1000 - n1; n2 = 1000 - n2; n3 = 1000 - n3; n4 = 1000 - n4;
@@ -178,12 +255,12 @@ void loop(){
   Serial.print("N:");
   Serial.print(n1); Serial.print(",");
   Serial.print(n2); Serial.print(",");
-  Serial.print(n3); Serial.print(",");
+  Serial.print(n3); Serial.print(",");\
+  
   Serial.print(n4);
   Serial.print("  e="); Serial.print(error, 3);
   Serial.print("  corr="); Serial.print(corr, 2);
   Serial.print("  L="); Serial.print(left);
   Serial.print("  R="); Serial.println(right);
 
-  delay(5);
 }
