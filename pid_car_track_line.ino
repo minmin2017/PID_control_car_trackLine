@@ -11,6 +11,7 @@ const bool wifi = true;
 
 // ================== DRV8833 PIN MAP ==================
 static const int AIN1 = 25;
+
 static const int AIN2 = 26;
 static const int EN   = 27;   // HIGH always
 static const int BIN1 = 33;
@@ -41,6 +42,7 @@ float prevError = 0.0f;
 unsigned long prevMs = 0;
 
 // ================== TURN STATE MACHINE ==================
+
 enum RunState { FOLLOW, UTURN, RTURN };
 RunState runState = FOLLOW;
 
@@ -148,6 +150,11 @@ void setup(){
   pinMode(AIN2, OUTPUT);
   pinMode(BIN1, OUTPUT);
   pinMode(BIN2, OUTPUT);
+
+  pinMode(S1, INPUT);
+  pinMode(S2, INPUT);
+  pinMode(S3, INPUT);
+  pinMode(S4, INPUT);
 
   analogReadResolution(12);
   analogSetAttenuation(ADC_11db);

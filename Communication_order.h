@@ -38,7 +38,7 @@ public:
   void setLineHook(LineHook hook) { lineHook = hook; }
 
   // ===== เพิ่ม: เช็ค/ดึง client ไปใช้ข้างนอก =====
-  bool hasClient() const { return client && client.connected(); }
+  bool hasClient()  { return client && client.connected(); }
 
   WiFiClient& clientRef() { return client; }  // ใช้คู่กับ hasClient()
 
