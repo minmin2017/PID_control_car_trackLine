@@ -97,7 +97,7 @@ class ESPMapUI:
         controls.columnconfigure(1, weight=1)
 
         ttk.Label(controls, text="ESP32 IP:").grid(row=0, column=0, padx=(0, 6), sticky="w")
-        self.ip_var = tk.StringVar(value="192.168.1.100")  # <-- change default
+        self.ip_var = tk.StringVar(value="172.20.10.2")  # <-- change default
         self.ip_entry = ttk.Entry(controls, textvariable=self.ip_var, width=18)
         self.ip_entry.grid(row=0, column=1, sticky="w")
 
@@ -228,7 +228,7 @@ class ESPMapUI:
 
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(5.0)
+            s.settimeout(20.0)
             s.connect((ip, PORT))
             s.settimeout(None)
             self.sock = s

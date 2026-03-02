@@ -7,21 +7,20 @@ LanCommand net;
 // ---------------- WiFi ----------------
 const char* ssid     = "MinMin2017";
 const char* password = "minmin2017i";
-const bool wifi = true;
+const bool wifi_enable = true;
 
 // ================== DRV8833 PIN MAP ==================
-static const int AIN1 = 25;
-
-static const int AIN2 = 26;
-static const int EN   = 27;   // HIGH always
-static const int BIN1 = 33;
-static const int BIN2 = 32;
+static const int AIN1 = 27;
+static const int AIN2 = 14;
+static const int EN   = 12;   // HIGH always
+static const int BIN1 = 26;
+static const int BIN2 = 25;
 
 // ================== IR SENSOR PINS (4 inputs) ==================
 static const int S1 = 34; // leftmost
 static const int S2 = 35;
-static const int S3 = 2;
-static const int S4 = 15; // rightmost
+static const int S3 = 32;
+static const int S4 = 33; // rightmost
 
 // ================== PID GAINS ==================
 float Kp = 30.0f;
@@ -29,8 +28,8 @@ float Ki = 50.0f;
 float Kd = 0.0f;
 
 // ================== SPEED SETTINGS ==================
-int baseSpeed = 140;     // 0..255
-int maxSpeed  = 220;     // clamp 0..255
+int baseSpeed = 110;     // 0..255
+int maxSpeed  = 200;     // clamp 0..255
 
 // ================== SENSOR AUTO-CAL ==================
 int sMin[4] = {4095,4095,4095,4095};
@@ -41,19 +40,25 @@ float integral  = 0.0f;
 float prevError = 0.0f;
 unsigned long prevMs = 0;
 
-// ================== TURN STATE MACHINE ==================
-
-enum RunState { FOLLOW, UTURN, RTURN };
+// ================== STATE MACHINE ==================
+enum RunState { FOLLOW, UTURN, STRAIGHT_BEFORE_RTURN, RTURN };
 RunState runState = FOLLOW;
 
 unsigned long actionStartMs = 0;
-const int TURN_PWM = 150;
-const unsigned long UTURN_MS = 700; // ~180 deg (ปรับได้)
-const unsigned long RTURN_MS = 350; // ~90 deg  (ปรับได้)
 
-// กันสัญญาณแกว่ง
+const int TURN_PWM = 150;
+
+// “เจอแยก (4 ตัวสูง) -> ตรงไปต่ออีกกี่ ms -> ค่อยเลี้ยวขวา”
+const unsigned long STRAIGHT_MS = 250;  // ปรับเป็น 400, 600, 800 ได้
+
+// กันสัญญาณแกว่ง (เข้าโหมดพิเศษ)
 int confirmLow = 0, confirmHigh = 0;
-const int CONFIRM_N = 3;
+const int CONFIRM_N = 2;
+
+// หยุดเลี้ยวด้วย “2 เส้นกลาง” (n2,n3) ตามสนามคุณ
+bool turnArmed = false;         // ต้องหลุด centerHigh ก่อน ถึงจะเริ่มนับหยุด
+int  confirmStop = 0;           // นับยืนยันตอน centerHigh เพื่อหยุด
+const int STOP_CONFIRM_N = 2;
 
 // ---------- utility ----------
 static inline int clampi(int v, int lo, int hi){
@@ -119,12 +124,12 @@ void calibrate(unsigned long ms = 2000){
     (void)readNorm(S2, 1);
     (void)readNorm(S3, 2);
     (void)readNorm(S4, 3);
-    delay(5); // calibration ช่วงสั้นๆ ยอมให้มี delay ได้
+    delay(5);
   }
 }
 
 static inline void sendToClient(const char* msg){
-  if (wifi && net.hasClient()){
+  if (wifi_enable && net.hasClient()){
     net.clientRef().println(msg);
   }
 }
@@ -133,7 +138,7 @@ static inline void sendToClient(const char* msg){
 void setup(){
   Serial.begin(115200);
 
-  if (wifi) {
+  if (wifi_enable) {
     bool ok = net.begin(ssid, password);
     if (!ok) {
       Serial.println("WiFi failed (net.begin timeout)");
@@ -167,81 +172,130 @@ void setup(){
   Serial.println("Calibration done.");
 
   prevMs = millis();
-  sendToClient("F"); // เริ่มต้นอยู่โหมดตามเส้น
 }
 
 // ================== LOOP ==================
+int first_time = 0;
 void loop(){
-  if (wifi) net.update();
+  if (wifi_enable) net.update();
+  if (first_time==0){
+    sendToClient("F");
+    first_time = 1;
+  }
 
   int n1 = readNorm(S1, 0);
   int n2 = readNorm(S2, 1);
   int n3 = readNorm(S3, 2);
   int n4 = readNorm(S4, 3);
 
+  // ใช้ detect “ทางตัน/หลุดเส้น” (คงเดิม)
   bool allLow  = (n1>=0   && n1<=100) &&
                  (n2>=0   && n2<=100) &&
                  (n3>=0   && n3<=100) &&
                  (n4>=0   && n4<=100);
 
-  bool allHigh = (n1>=900 && n1<=1000) &&
-                 (n2>=900 && n2<=1000) &&
-                 (n3>=900 && n3<=1000) &&
-                 (n4>=900 && n4<=1000);
+  // ใช้ detect “แยก/จุดสั่งเลี้ยวขวา” (คงเดิม: 4 ตัวสูง)
+  bool allHigh = (n1>=800 && n1<=1000) &&
+                 (n2>=800 && n2<=1000) &&
+                 (n3>=800 && n3<=1000) &&
+                 (n4>=800 && n4<=1000);
+
+  // เกณฑ์ “เจอเส้นตอนกำลังเลี้ยว” ตามที่คุณต้องการ: ใช้แค่กลาง 2 ตัว
+  bool centerHigh = (n2 >= 900 && n3 >= 900);
 
   unsigned long now = millis();
 
-  // ================== NON-BLOCKING TURN STATE MACHINE ==================
+  // ================== NON-BLOCKING STATE MACHINE ==================
   switch(runState){
 
     case FOLLOW: {
       confirmLow  = allLow  ? (confirmLow  + 1) : 0;
       confirmHigh = allHigh ? (confirmHigh + 1) : 0;
 
+      // เจอ allLow ต่อเนื่อง -> UTURN (หมุนจน centerHigh กลับมา)
       if(confirmLow >= CONFIRM_N){
         runState = UTURN;
-        actionStartMs = now;
         confirmLow = confirmHigh = 0;
+
+        turnArmed = false;
+        confirmStop = 0;
 
         motorA( TURN_PWM);
         motorB(-TURN_PWM);
         sendToClient("U");
-        return; // กัน PID ทับรอบนี้
-      }
-
-      if(confirmHigh >= CONFIRM_N){
-        runState = RTURN;
-        actionStartMs = now;
-        confirmLow = confirmHigh = 0;
-
-        motorA( TURN_PWM);
-        motorB(-TURN_PWM);
-        sendToClient("R");
         return;
       }
 
-      // ไม่เข้าเงื่อนไขพิเศษ -> ไป PID ด้านล่าง
-      break;
+      // เจอ allHigh ต่อเนื่อง -> ตรงไปก่อน STRAIGHT_MS แล้วค่อย RTURN
+      if(confirmHigh >= CONFIRM_N){
+        runState = STRAIGHT_BEFORE_RTURN;
+        confirmLow = confirmHigh = 0;
+
+        actionStartMs = now;
+
+        motorA(baseSpeed);
+        motorB(baseSpeed);
+
+        sendToClient("S"); // Straight before right turn
+        return;
+      }
+
+      break; // ไป PID
+    }
+
+    case STRAIGHT_BEFORE_RTURN: {
+      // ตรงไปต่อก่อนเลี้ยวขวา
+      motorA(baseSpeed);
+      motorB(baseSpeed);
+
+      if(now - actionStartMs >= STRAIGHT_MS){
+        runState = RTURN;
+
+        turnArmed = false;
+        confirmStop = 0;
+
+        motorA(TURN_PWM);
+        motorB(0);
+        sendToClient("R");
+      }
+      return;
     }
 
     case UTURN: {
       motorA( TURN_PWM);
       motorB(-TURN_PWM);
 
-      if(now - actionStartMs >= UTURN_MS){
+      // ต้องหลุด centerHigh ก่อน (กันเข้าแล้วหยุดทันที)
+      if(!centerHigh) turnArmed = true;
+
+      if(turnArmed && centerHigh){
+        confirmStop++;
+      } else {
+        confirmStop = 0;
+      }
+
+      if(confirmStop >= STOP_CONFIRM_N){
         motorA(0);
         motorB(0);
         runState = FOLLOW;
         sendToClient("F");
       }
-      return; // ระหว่างหมุน ไม่ให้ PID ทับ
+      return;
     }
 
     case RTURN: {
       motorA( TURN_PWM);
-      motorB(-TURN_PWM);
+      motorB(0);
 
-      if(now - actionStartMs >= RTURN_MS){
+      if(!centerHigh) turnArmed = true;
+
+      if(turnArmed && centerHigh){
+        confirmStop++;
+      } else {
+        confirmStop = 0;
+      }
+
+      if(confirmStop >= STOP_CONFIRM_N){
         motorA(0);
         motorB(0);
         runState = FOLLOW;
@@ -281,6 +335,13 @@ void loop(){
   Serial.print(n2); Serial.print(",");
   Serial.print(n3); Serial.print(",");
   Serial.print(n4);
+  Serial.print("  allLow="); Serial.print(allLow);
+  Serial.print("  allHigh="); Serial.print(allHigh);
+  Serial.print("  centerHigh="); Serial.print(centerHigh);
+  Serial.print("  state="); Serial.print((int)runState);
+  Serial.print("  armed="); Serial.print(turnArmed);
+  Serial.print("  stopCnt="); Serial.print(confirmStop);
+
   Serial.print("  e="); Serial.print(error, 3);
   Serial.print("  corr="); Serial.print(corr, 2);
   Serial.print("  L="); Serial.print(left);
