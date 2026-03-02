@@ -7,7 +7,7 @@ LanCommand net;
 // ---------------- WiFi ----------------
 const char* ssid     = "MinMin2017";
 const char* password = "minmin2017i";
-const bool wifi_enable = true;
+const bool wifi_enable = false;
 
 // ================== DRV8833 PIN MAP ==================
 static const int AIN1 = 27;
@@ -46,7 +46,7 @@ RunState runState = FOLLOW;
 
 unsigned long actionStartMs = 0;
 
-const int TURN_PWM = 150;
+const int TURN_PWM = 80;
 
 // “เจอแยก (4 ตัวสูง) -> ตรงไปต่ออีกกี่ ms -> ค่อยเลี้ยวขวา”
 const unsigned long STRAIGHT_MS = 250;  // ปรับเป็น 400, 600, 800 ได้
@@ -189,10 +189,10 @@ void loop(){
   int n4 = readNorm(S4, 3);
 
   // ใช้ detect “ทางตัน/หลุดเส้น” (คงเดิม)
-  bool allLow  = (n1>=0   && n1<=100) &&
-                 (n2>=0   && n2<=100) &&
-                 (n3>=0   && n3<=100) &&
-                 (n4>=0   && n4<=100);
+  bool allLow  = (n1>=0   && n1<=300) &&
+                 (n2>=0   && n2<=300) &&
+                 (n3>=0   && n3<=300) &&
+                 (n4>=0   && n4<=300);
 
   // ใช้ detect “แยก/จุดสั่งเลี้ยวขวา” (คงเดิม: 4 ตัวสูง)
   bool allHigh = (n1>=800 && n1<=1000) &&
@@ -201,7 +201,7 @@ void loop(){
                  (n4>=800 && n4<=1000);
 
   // เกณฑ์ “เจอเส้นตอนกำลังเลี้ยว” ตามที่คุณต้องการ: ใช้แค่กลาง 2 ตัว
-  bool centerHigh = (n2 >= 900 && n3 >= 900);
+  bool centerHigh = (n2 >= 800 && n3 >= 800);
 
   unsigned long now = millis();
 
@@ -211,20 +211,6 @@ void loop(){
     case FOLLOW: {
       confirmLow  = allLow  ? (confirmLow  + 1) : 0;
       confirmHigh = allHigh ? (confirmHigh + 1) : 0;
-
-      // เจอ allLow ต่อเนื่อง -> UTURN (หมุนจน centerHigh กลับมา)
-      if(confirmLow >= CONFIRM_N){
-        runState = UTURN;
-        confirmLow = confirmHigh = 0;
-
-        turnArmed = false;
-        confirmStop = 0;
-
-        motorA( TURN_PWM);
-        motorB(-TURN_PWM);
-        sendToClient("U");
-        return;
-      }
 
       // เจอ allHigh ต่อเนื่อง -> ตรงไปก่อน STRAIGHT_MS แล้วค่อย RTURN
       if(confirmHigh >= CONFIRM_N){
@@ -239,6 +225,22 @@ void loop(){
         sendToClient("S"); // Straight before right turn
         return;
       }
+      
+      // เจอ allLow ต่อเนื่อง -> UTURN (หมุนจน centerHigh กลับมา)
+      if(confirmLow >= CONFIRM_N){
+        runState = UTURN;
+        confirmLow = confirmHigh = 0;
+
+        turnArmed = false;
+        confirmStop = 0;
+
+        motorA( TURN_PWM);
+        motorB(-TURN_PWM);
+        sendToClient("U");
+        return;
+      }
+
+      
 
       break; // ไป PID
     }
