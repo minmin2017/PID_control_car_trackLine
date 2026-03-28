@@ -46,7 +46,7 @@ RunState runState = FOLLOW;
 
 unsigned long actionStartMs = 0;
 
-const int TURN_PWM = 80;
+const int TURN_PWM = 100;
 
 // “เจอแยก (4 ตัวสูง) -> ตรงไปต่ออีกกี่ ms -> ค่อยเลี้ยวขวา”
 const unsigned long STRAIGHT_MS = 250;  // ปรับเป็น 400, 600, 800 ได้
@@ -115,7 +115,10 @@ float computeError(int n1, int n2, int n3, int n4){
   float pos = (w1*n1 + w2*n2 + w3*n3 + w4*n4) / sum; // approx -3..+3
   return pos;
 }
-
+void resetTurnStop(){
+  turnArmed         = 0;
+  
+}
 // ================== CALIBRATE ==================
 void calibrate(unsigned long ms = 2000){
   unsigned long t0 = millis();
@@ -170,6 +173,8 @@ void setup(){
   Serial.println("Calibrating IR... (move over line and floor)");
   calibrate(2000);
   Serial.println("Calibration done.");
+  motorA(baseSpeed);
+  motorB(baseSpeed);
 
   prevMs = millis();
 }
@@ -201,7 +206,7 @@ void loop(){
                  (n4>=800 && n4<=1000);
 
   // เกณฑ์ “เจอเส้นตอนกำลังเลี้ยว” ตามที่คุณต้องการ: ใช้แค่กลาง 2 ตัว
-  bool centerHigh = (n2 >= 800 && n3 >= 800);
+  bool centerHigh = (n2 >= 800 || n3 >= 800);
 
   unsigned long now = millis();
 
@@ -215,6 +220,7 @@ void loop(){
 
       // เจอ allHigh ต่อเนื่อง -> ตรงไปก่อน STRAIGHT_MS แล้วค่อย RTURN
       if(confirmHigh >= CONFIRM_N){
+        resetTurnStop();
         runState = STRAIGHT_BEFORE_RTURN;
         confirmLow = confirmHigh = 0;
 
@@ -230,7 +236,7 @@ void loop(){
       // เจอ allLow ต่อเนื่อง -> UTURN (หมุนจน centerHigh กลับมา)
       if(confirmLow >= CONFIRM_N){
         runState = UTURN;
-        resetTurnStop();  // ← reset ตรงนี้
+          // ← reset ตรงนี้
         confirmLow = confirmHigh = 0;
 
         turnArmed = false;
@@ -255,7 +261,7 @@ void loop(){
 
       if(now - actionStartMs >= STRAIGHT_MS){
         runState = RTURN;
-        resetTurnStop();  // ← reset ตรงนี้
+       // ← reset ตรงนี้
         turnArmed = false;
         confirmStop = 0;
 
@@ -349,7 +355,7 @@ void loop(){
   Serial.print("  centerHigh="); Serial.print(centerHigh);
   Serial.print("  state="); Serial.print((int)runState);
   Serial.print("  armed="); Serial.print(turnArmed);
-  Serial.print("  stopCnt="); Serial.print(confirmStop);
+
 
   Serial.print("  e="); Serial.print(error, 3);
   Serial.print("  corr="); Serial.print(corr, 2);
