@@ -209,6 +209,7 @@ void loop(){
   switch(runState){
 
     case FOLLOW: {
+      Serial.println("Foolw");
       confirmLow  = allLow  ? (confirmLow  + 1) : 0;
       confirmHigh = allHigh ? (confirmHigh + 1) : 0;
 
@@ -229,6 +230,7 @@ void loop(){
       // เจอ allLow ต่อเนื่อง -> UTURN (หมุนจน centerHigh กลับมา)
       if(confirmLow >= CONFIRM_N){
         runState = UTURN;
+        resetTurnStop();  // ← reset ตรงนี้
         confirmLow = confirmHigh = 0;
 
         turnArmed = false;
@@ -246,13 +248,14 @@ void loop(){
     }
 
     case STRAIGHT_BEFORE_RTURN: {
+      Serial.println("state before run");
       // ตรงไปต่อก่อนเลี้ยวขวา
       motorA(baseSpeed);
       motorB(baseSpeed);
 
       if(now - actionStartMs >= STRAIGHT_MS){
         runState = RTURN;
-
+        resetTurnStop();  // ← reset ตรงนี้
         turnArmed = false;
         confirmStop = 0;
 
@@ -264,6 +267,7 @@ void loop(){
     }
 
     case UTURN: {
+      Serial.println("u");
       motorA( TURN_PWM);
       motorB(-TURN_PWM);
 
@@ -286,6 +290,7 @@ void loop(){
     }
 
     case RTURN: {
+      Serial.println("R");
       motorA( TURN_PWM);
       motorB(0);
 
@@ -305,7 +310,9 @@ void loop(){
       }
       return;
     }
+
   }
+ 
 
   // ================== PID FOLLOW ==================
   float error = computeError(n1, n2, n3, n4);
