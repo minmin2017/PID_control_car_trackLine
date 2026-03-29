@@ -7,7 +7,7 @@ LanCommand net;
 // ---------------- WiFi ----------------
 const char* ssid     = "MinMin2017";
 const char* password = "minmin2017i";
-const bool wifi_enable = true;
+const bool wifi_enable = false;
 
 // ================== DRV8833 PIN MAP ==================
 static const int AIN1 = 27;
@@ -47,7 +47,7 @@ RunState runState = FOLLOW;
 unsigned long actionStartMs = 0;
 
 const int TURN_PWM = 110;
-const unsigned long STRAIGHT_MS = 250;
+const unsigned long STRAIGHT_MS = 750;
 
 // debounce เข้า state พิเศษ
 int confirmLow = 0, confirmHigh = 0;
@@ -150,8 +150,8 @@ void sendDebug(int n1, int n2, int n3, int n4,
 // return true เมื่อควรหยุด
 bool checkTurnStop(bool centerHigh, unsigned long now){
   // phase 1: รอให้หลุดเส้นก่อน
-  if(!turnArmed){
-    if(!centerHigh) turnArmed = true;
+  if(!turnArmed){ // turnArmed == false
+    if(!centerHigh) turnArmed = true; //center = ที่ว่าง 
     return false;
   }
 
@@ -211,7 +211,8 @@ void loop(){
       confirmLow  = allLow  ? (confirmLow+1)  : 0;
       confirmHigh = allHigh ? (confirmHigh+1) : 0;
 
-      if(confirmHigh >= CONFIRM_N){
+      if(confirmHigh >= CONFIRM_N){ // R 
+        resetTurnStop();
         runState = STRAIGHT_BEFORE_RTURN;
         confirmLow = confirmHigh = 0;
         actionStartMs = now;
@@ -221,7 +222,7 @@ void loop(){
         return;
       }
 
-      if(confirmLow >= CONFIRM_N){
+      if(confirmLow >= CONFIRM_N){ // U 
         runState = UTURN;
         confirmLow = confirmHigh = 0;
         resetTurnStop(); // [FIX v2]

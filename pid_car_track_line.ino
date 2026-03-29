@@ -28,7 +28,7 @@ float Ki = 50.0f;
 float Kd = 0.0f;
 
 // ================== SPEED SETTINGS ==================
-int baseSpeed = 110;     // 0..255
+int baseSpeed = 150;     // 0..255
 int maxSpeed  = 200;     // clamp 0..255
 
 // ================== SENSOR AUTO-CAL ==================
@@ -219,7 +219,7 @@ void loop(){
       confirmHigh = allHigh ? (confirmHigh + 1) : 0;
 
       // เจอ allHigh ต่อเนื่อง -> ตรงไปก่อน STRAIGHT_MS แล้วค่อย RTURN
-      if(confirmHigh >= CONFIRM_N){
+      if(confirmHigh >= 1){
         resetTurnStop();
         runState = STRAIGHT_BEFORE_RTURN;
         confirmLow = confirmHigh = 0;
@@ -258,13 +258,12 @@ void loop(){
       // ตรงไปต่อก่อนเลี้ยวขวา
       motorA(baseSpeed);
       motorB(baseSpeed);
-
       if(now - actionStartMs >= STRAIGHT_MS){
         runState = RTURN;
        // ← reset ตรงนี้
         turnArmed = false;
         confirmStop = 0;
-
+        actionStartMs = now;
         motorA(TURN_PWM);
         motorB(0);
         sendToClient("R");
@@ -273,6 +272,9 @@ void loop(){
     }
 
     case UTURN: {
+      if(now - actionStartMs >= STRAIGHT_MS){
+
+      }
       Serial.println("u");
       motorA( TURN_PWM);
       motorB(-TURN_PWM);
@@ -296,7 +298,11 @@ void loop(){
     }
 
     case RTURN: {
-      Serial.println("R");
+      if(now - actionStartMs <= 500){
+        Serial.println(now - actionStartMs);
+        return;
+      }
+      Serial.println(confirmStop);
       motorA( TURN_PWM);
       motorB(0);
 
@@ -308,9 +314,9 @@ void loop(){
         confirmStop = 0;
       }
 
-      if(confirmStop >= STOP_CONFIRM_N){
-        motorA(0);
-        motorB(0);
+      if(confirmStop >= 1){
+        motorA(baseSpeed);
+        motorB(baseSpeed);
         runState = FOLLOW;
         sendToClient("F");
       }
