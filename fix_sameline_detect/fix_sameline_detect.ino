@@ -3,11 +3,15 @@
 #include "Communication_order.h"
 
 LanCommand net;
-
+String  path_map = ""; 
+//ex
+// path += 'F';
+// path += 'R';
+// path += 'U';
 // ---------------- WiFi ----------------
 const char* ssid     = "MinMin2017";
 const char* password = "minmin2017i";
-const bool wifi_enable = false;
+const bool wifi_enable = true;
 
 // ================== DRV8833 PIN MAP ==================
 static const int AIN1 = 27;
@@ -30,7 +34,7 @@ float Kd = 0.0f;
 // ================== SPEED SETTINGS ==================
 int baseSpeed = 120;
 int maxSpeed  = 200;
-
+const int TURN_PWM = 110;
 // ================== SENSOR AUTO-CAL ==================
 int sMin[4] = {4095,4095,4095,4095};
 int sMax[4] = {0,0,0,0};
@@ -46,8 +50,8 @@ RunState runState = FOLLOW;
 
 unsigned long actionStartMs = 0;
 
-const int TURN_PWM = 110;
-const unsigned long STRAIGHT_MS = 750;
+
+const unsigned long STRAIGHT_MS = 525;
 
 // debounce เข้า state พิเศษ
 int confirmLow = 0, confirmHigh = 0;
@@ -84,7 +88,11 @@ void resetTurnStop(){
   turnArmed         = false;
   centerHighStartMs = 0;
 }
-
+void addToPath(char c) {
+    if (path_map.length() == 0 || path_map[path_map.length() - 1] != c) {
+        path_map += c;
+    }
+}
 // ================== MOTOR CONTROL ==================
 void motorA(int speed){
   speed = clampi(speed, -255, 255);
@@ -185,6 +193,7 @@ void setup(){
   Serial.println("Done.");
 
   resetPID();
+  motorA(baseSpeed); motorB(baseSpeed);
 }
 
 // ================== LOOP ==================
@@ -218,6 +227,7 @@ void loop(){
         actionStartMs = now;
         motorA(baseSpeed); motorB(baseSpeed);
         sendToClient("S");
+        //addToPath('F');
         prevMs = now;
         return;
       }
@@ -229,6 +239,7 @@ void loop(){
         motorA( TURN_PWM);
         motorB(-TURN_PWM);
         sendToClient("U");
+        addToPath('U');
         prevMs = now;
         return;
       }
@@ -243,6 +254,7 @@ void loop(){
         motorA(TURN_PWM);
         motorB(0);
         sendToClient("R");
+        addToPath('R');
       }
       sendDebug(n1,n2,n3,n4,(int)runState,allLow,allHigh,centerHigh,now);
       prevMs = now;
@@ -257,7 +269,7 @@ void loop(){
         motorA(0); motorB(0);
         runState = FOLLOW;
         resetPID(); // [FIX v1]
-        sendToClient("F");
+      
       }
       sendDebug(n1,n2,n3,n4,(int)runState,allLow,allHigh,centerHigh,now);
       prevMs = now;
@@ -268,13 +280,13 @@ void loop(){
       motorA(TURN_PWM);
       motorB(0);
 
-      if(checkTurnStop(centerHigh, now)){ // [FIX v2]
+      if(checkTurnStop(centerHigh, now) && (now-actionStartMs) >= STRAIGHT_MS+500 ){ // [FIX v2]
         motorA(0); motorB(0);
         runState = FOLLOW;
         resetPID(); // [FIX v1]
-        sendToClient("F");
+        
       }else{
-        Serial.println(centerHigh);
+        Serial.println(now-actionStartMs);
       }
       sendDebug(n1,n2,n3,n4,(int)runState,allLow,allHigh,centerHigh,now);
       prevMs = now;
