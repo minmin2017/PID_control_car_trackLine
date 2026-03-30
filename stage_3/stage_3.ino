@@ -30,7 +30,7 @@ float Kd = 0.0f;
 // ================== SPEED SETTINGS ==================
 int baseSpeed = 150;
 int maxSpeed  = 200;
-const int TURN_PWM = 110;
+const int TURN_PWM = 150;
 
 // ================== SENSOR AUTO-CAL ==================
 int sMin[4] = {4095, 4095, 4095, 4095};
@@ -65,7 +65,7 @@ bool turnArmed = false;
 unsigned long centerHighStartMs = 0;
 
 // ========== CHECKPOINT VARIABLES ==========
-const unsigned long STRAIGHT_CHECK_MS = 400;
+const unsigned long STRAIGHT_CHECK_MS = 400; // 400
 
 int checkpointCount = 0;
 unsigned long straightCheckStart = 0;
@@ -76,7 +76,7 @@ bool stopAfterUTurn = false;
 // ========== CHECKPOINT CONFIRMATION ==========
 char pendingCP = '\0';
 int cpConfirmCount = 0;
-const int CP_CONFIRM_N = 3; // ต้องเจอ 3 ครั้งติดกันถึงจะยืนยัน
+const int CP_CONFIRM_N = 50; // ต้องเจอ 3 ครั้งติดกันถึงจะยืนยัน
 
 // ========== CHECKPOINT TRACKING ==========
 bool foundA = false, foundB = false, foundC = false;
@@ -167,13 +167,16 @@ bool checkTurnStop(bool centerHigh, unsigned long now) {
 
 // ========== IDENTIFY CHECKPOINT BY PATTERN ==========
 char identifyCheckpoint(int n1, int n2, int n3, int n4) {
+  //Serial.print(n1);Serial.print(" "); Serial.print(n2);Serial.print(" "); Serial.print(n3);Serial.print(" "); Serial.println(n4);
   bool h1 = (n1 >= 700), l1 = (n1 < 300);
   bool h2 = (n2 >= 700), l2 = (n2 < 300);
   bool h3 = (n3 >= 700), l3 = (n3 < 300);
   bool h4 = (n4 >= 700), l4 = (n4 < 300);
 
   if ((h1 && l2 && l3 && h4) || (h1 && h2 && l3 && h4) || (h1 && l2 && h3 && h4)) return 'C';
-  if (l1 && l2 && l3 && h4) return 'B';
+  if (l1 && l2 && l3 && h4){
+    
+    return 'B' ;}
   if ((h1 && h2 && l3 && l4) || (h1 && h2 && h3 && l4)) return 'A';
   return '\0';
 }
@@ -479,11 +482,11 @@ void loop() {
 
     // ==================== UTURNTHEN ====================
     case UTURNTHEN: {
+      
       motorA(TURN_PWM); motorB(-TURN_PWM);
-
       // --- กรณีที่เจอครบ 3 จุดแล้ว (stopAfterUTurn == true) ---
       if (stopAfterUTurn) {
-        if (now - actionStartMs >= 1000) {
+        if (now - actionStartMs >= 900) {
           motorA(0); motorB(0); // เปลี่ยนจาก 10 เป็น 0 ให้มอเตอร์เบรกสนิท
           motorA(0); motorB(0);
           Serial.println(">> STOP (all checkpoints found, after 1s U-Turn)");
@@ -491,6 +494,9 @@ void loop() {
           // หยุดกระพริบ LED และรอ 3 วินาที
           unsigned long blinkStart = millis();
           while (millis() - blinkStart < 3000) {
+            Serial.print("wait");
+            Serial.println(millis() - blinkStart);
+            motorA(0); motorB(0);
             digitalWrite(15, 1); digitalWrite(4, 1); digitalWrite(5, 1); delay(200);
             digitalWrite(15, 0); digitalWrite(4, 0); digitalWrite(5, 0); delay(200);
           }
@@ -535,6 +541,7 @@ void loop() {
       } 
       // --- กรณีที่เจอจุดที่ 1 หรือ 2 (ยังไม่ครบ 3 จุด) ---
       else {
+        motorA(TURN_PWM); motorB(-TURN_PWM);
         if (checkTurnStop(centerHigh, now) && (now-actionStartMs) >= 700) {
           motorA(0); motorB(0); 
           runState = FOLLOW; 
