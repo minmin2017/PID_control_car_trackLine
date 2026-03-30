@@ -190,7 +190,7 @@ void setup(){
   pinMode(S1,INPUT); pinMode(S2,INPUT);
   pinMode(S3,INPUT); pinMode(S4,INPUT);
   pinMode(15,OUTPUT);
-  pinMode(2,OUTPUT);
+  pinMode(4,OUTPUT);
   pinMode(5,OUTPUT);
 
   analogReadResolution(12);
@@ -203,11 +203,22 @@ void setup(){
   Serial.println("Done.");
 
   resetPID();
+  int check_start_only_on_line = 0;
+  while( (check_start_only_on_line == 0) ){
+    int n1 = readNorm(S1,0);
+    int n2 = readNorm(S2,1);
+    int n3 = readNorm(S3,2);
+    int n4 = readNorm(S4,3);
+    if (n1 <300 && n2 >800 && n3>800 && n4 <300){
+      check_start_only_on_line = 1;
+    }
+  }
   motorA(baseSpeed); motorB(baseSpeed);
 }
 
 // ================== LOOP ==================
 int first_time = 0;
+int glich_zero_count = 0;
 void loop(){
   
   if(wifi_enable) net.update();
@@ -219,26 +230,39 @@ void loop(){
   int n2 = readNorm(S2,1);
   int n3 = readNorm(S3,2);
   int n4 = readNorm(S4,3);
-  if(n1 ==0|| n2==0 || n3 ==0|| n4 ==0){
+  if((n1 ==0|| n2==0 || n3 ==0|| n4 ==0) && glich_zero_count == 0){
+    Serial.println(n1);
+    Serial.println(n2);
+    Serial.println(n3);
+    Serial.println(n4);
+    Serial.println("#########");
     digitalWrite(15,1);
     digitalWrite(5,1);
-    digitalWrite(2,1);
+    digitalWrite(4,1);
     delay(100);
     digitalWrite(15,0);
     digitalWrite(5,0);
-    digitalWrite(2,0);
+    digitalWrite(4,0);
     delay(100);
     return;
+  }else if (n1 !=0 && n2!=0 && n3 !=0&& n4 !=0){
+    glich_zero_count = 1;
+    if (checkpointCount == 1){
+      digitalWrite(15,1);
+    }else if(checkpointCount == 2){
+      digitalWrite(15,1);
+      digitalWrite(4,1);
+    }else if(checkpointCount ==3){
+      digitalWrite(15,1);
+      digitalWrite(5,1);
+      digitalWrite(4,1);
+    }
   }
   bool allLow  = (n1<=300 && n2<=300 && n3<=300 && n4<=300);
   bool allHigh = (n1>=800 && n2>=800 && n3>=800 && n4>=800);
   bool centerHigh = (n2>=800 ||  n3>=800);
 
-  Serial.println(n1);
-  Serial.println(n2);
-  Serial.println(n3);
-  Serial.println(n4);
-  Serial.println("#########");
+  
   // ================== STATE MACHINE ==================
   switch(runState){
 
@@ -413,11 +437,13 @@ void loop(){
       if(checkTurnStop(centerHigh, now) && (now-actionStartMs) >= STRAIGHT_MS+500){
         motorA(0); motorB(0);
         runState = FOLLOW;
+        confirmLow = 0;   // ← เพิ่ม
+        confirmHigh = 0;  // ← เพิ่ม
         resetPID();
       }else{
-        Serial.println(now-actionStartMs);
+        //Serial.println(now-actionStartMs);
       }
-      sendDebug(n1,n2,n3,n4,(int)runState,allLow,allHigh,centerHigh,now);
+      //sendDebug(n1,n2,n3,n4,(int)runState,allLow,allHigh,centerHigh,now);
       prevMs = now;
       return;
     }
@@ -443,16 +469,7 @@ void loop(){
 
   motorA(left);
   motorB(right);
-  if (checkpointCount == 1){
-    digitalWrite(15,1);
-  }else if(checkpointCount == 2){
-    digitalWrite(15,1);
-    digitalWrite(5,1);
-  }else if(checkpointCount ==3){
-    digitalWrite(15,1);
-    digitalWrite(5,1);
-    digitalWrite(2,1);
-  }
+  
   char dbg[160];
   snprintf(dbg, sizeof(dbg),
     "D:%d,%d,%d,%d,st=%d,aL=%d,aH=%d,cH=%d,arm=%d,hMs=%d,e=%.3f,c=%.2f,L=%d,R=%d,A=%d,B=%d,C=%d",
