@@ -485,7 +485,7 @@ void loop() {
       if (stopAfterUTurn) {
         if (now - actionStartMs >= 1000) {
           motorA(0); motorB(0); // เปลี่ยนจาก 10 เป็น 0 ให้มอเตอร์เบรกสนิท
-
+          motorA(0); motorB(0);
           Serial.println(">> STOP (all checkpoints found, after 1s U-Turn)");
 
           // หยุดกระพริบ LED และรอ 3 วินาที
@@ -535,7 +535,7 @@ void loop() {
       } 
       // --- กรณีที่เจอจุดที่ 1 หรือ 2 (ยังไม่ครบ 3 จุด) ---
       else {
-        if (checkTurnStop(centerHigh, now)) {
+        if (checkTurnStop(centerHigh, now) && (now-actionStartMs) >= 700) {
           motorA(0); motorB(0); 
           runState = FOLLOW; 
           resetPID();
