@@ -401,6 +401,7 @@ void loop() {
           resetTurnStop();
           motorA(TURN_PWM); motorB(-TURN_PWM);
           Serial.println(">> FINAL MISSION COMPLETE! DOING U-TURN");
+          actionStartMs = now;
           prevMs = now; return;
         }
 
@@ -581,7 +582,7 @@ void loop() {
     // ==================== FINAL_UTURN ====================
     case FINAL_UTURN: {
       motorA(TURN_PWM); motorB(-TURN_PWM);
-      if (checkTurnStop(centerHigh, now)) {
+      if (checkTurnStop(centerHigh, now) && (now-actionStartMs) >= 700) {
         motorA(0); motorB(0);
         Serial.println(">> FINAL U-TURN DONE! BLINKING SEQUENTIALLY FOREVER");
         
