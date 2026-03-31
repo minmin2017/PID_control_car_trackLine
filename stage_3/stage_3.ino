@@ -47,7 +47,8 @@ enum RunState {
   STRAIGHT_CHECK, REVERSE_BACK, UTURNTHEN,
   STRAIGHT_BEFORE_LTURN, LTURN,
   STRAIGHT_THROUGH,
-  HOME_UTURN
+  HOME_UTURN,
+  FINAL_UTURN
 };
 RunState runState = FOLLOW;
 
@@ -76,7 +77,7 @@ bool stopAfterUTurn = false;
 // ========== CHECKPOINT CONFIRMATION ==========
 char pendingCP = '\0';
 int cpConfirmCount = 0;
-const int CP_CONFIRM_N = 50; // ต้องเจอ 3 ครั้งติดกันถึงจะยืนยัน
+const int CP_CONFIRM_N = 50; 
 
 // ========== CHECKPOINT TRACKING ==========
 bool foundA = false, foundB = false, foundC = false;
@@ -89,7 +90,7 @@ int    returnJunctionsTotal = 0;
 int    returnJunctionsDone  = 0;
 bool   nearHome = false;
 
-// ========== RETURN PATH VARIABLES (เพิ่มใหม่) ==========
+// ========== RETURN PATH VARIABLES ==========
 String returnJunctionsStr = "";
 int    returnJunctionIndex = 0;
 
@@ -167,21 +168,18 @@ bool checkTurnStop(bool centerHigh, unsigned long now) {
 
 // ========== IDENTIFY CHECKPOINT BY PATTERN ==========
 char identifyCheckpoint(int n1, int n2, int n3, int n4) {
-  //Serial.print(n1);Serial.print(" "); Serial.print(n2);Serial.print(" "); Serial.print(n3);Serial.print(" "); Serial.println(n4);
   bool h1 = (n1 >= 700), l1 = (n1 < 300);
   bool h2 = (n2 >= 700), l2 = (n2 < 300);
   bool h3 = (n3 >= 700), l3 = (n3 < 300);
   bool h4 = (n4 >= 700), l4 = (n4 < 300);
 
   if ((h1 && l2 && l3 && h4) || (h1 && h2 && l3 && h4) || (h1 && l2 && h3 && h4)) return 'C';
-  if (l1 && l2 && l3 && h4){
-    
-    return 'B' ;}
+  if (l1 && l2 && l3 && h4){ return 'B' ;}
   if ((h1 && h2 && l3 && l4) || (h1 && h2 && h3 && l4)) return 'A';
   return '\0';
 }
 
-// ========== HELPERS ==========
+// ========== PATH COMPUTATION HELPERS ==========
 String stripCheckpoints(String s) {
   String r = "";
   for (int i = 0; i < (int)s.length(); i++) {
@@ -238,13 +236,31 @@ String extractJunctions(String path) {
   return result;
 }
 
-int countChar(String s, char target) {
-  int cnt = 0;
-  for (int i = 0; i < (int)s.length(); i++) {
-    if (s.charAt(i) == target) cnt++;
-  }
-  return cnt;
+// ================== RELATIVE TURN CALCULATOR ==================
+// ฟังก์ชันนี้จะแปลงทิศทางให้ถูกต้องเมื่อรถกลับออกมาจากสาขาอื่น
+char getRelativeTurn(char fromDir, char toDir) {
+  int hin = (fromDir == 'L') ? 1 : (fromDir == 'S') ? 2 : 3;
+  int hout = (toDir == 'L') ? 3 : (toDir == 'S') ? 0 : 1;
+  int diff = (hout - hin + 4) % 4;
+  if (diff == 0) return 'S';
+  if (diff == 1) return 'R';
+  if (diff == 3) return 'L';
+  return 'U';
 }
+
+String buildSegment(String p1, String p2) {
+  int p = commonPrefixLen(p1, p2);
+  if (p == (int)p1.length() && p == (int)p2.length()) return "";
+  
+  if (p == (int)p1.length()) return "U" + p2.substring(p);
+  if (p == (int)p2.length()) return reversePath(p1.substring(p));
+
+  String back = reversePath(p1.substring(p + 1));
+  char turn = getRelativeTurn(p1.charAt(p), p2.charAt(p));
+  String forward = p2.substring(p + 1);
+  return back + turn + forward;
+}
+// =============================================================
 
 // ================== SETUP ==================
 void setup() {
@@ -333,9 +349,6 @@ void loop() {
           Serial.println("L");
         }
         else if (currentMode == MODE_RETURN) {
-          // ==========================================
-          // แก้ไข: ใช้ Path ที่ยุบแล้วสำหรับขากลับบ้าน
-          // ==========================================
           if (returnJunctionIndex < (int)returnJunctionsStr.length()) {
             char action = returnJunctionsStr.charAt(returnJunctionIndex++);
             Serial.print("RET: "); Serial.println(action);
@@ -343,13 +356,14 @@ void loop() {
               resetTurnStop(); runState = STRAIGHT_BEFORE_RTURN;
             } else if (action == 'L') {
               resetTurnStop(); runState = STRAIGHT_BEFORE_LTURN;
+            } else if (action == 'U') {
+              resetTurnStop(); runState = UTURN;
             } else {
               runState = STRAIGHT_THROUGH;
             }
             motorA(baseSpeed); motorB(baseSpeed);
             if (returnJunctionIndex >= (int)returnJunctionsStr.length()) nearHome = true;
           }
-          // ==========================================
         }
         else { // MODE_SECOND
           if (optJunctionIndex < (int)optJunctions.length()) {
@@ -359,6 +373,8 @@ void loop() {
               resetTurnStop(); runState = STRAIGHT_BEFORE_RTURN;
             } else if (action == 'L') {
               resetTurnStop(); runState = STRAIGHT_BEFORE_LTURN;
+            } else if (action == 'U') {
+              resetTurnStop(); runState = UTURN;
             } else {
               runState = STRAIGHT_THROUGH;
             }
@@ -375,22 +391,22 @@ void loop() {
           runState = HOME_UTURN;
           resetTurnStop();
           motorA(TURN_PWM); motorB(-TURN_PWM);
+          actionStartMs = now;
           Serial.println(">> HOME - U-TURN");
           prevMs = now; return;
         }
 
         if (currentMode == MODE_SECOND && optJunctionIndex >= (int)optJunctions.length()) {
-          motorA(0); motorB(0);
-          Serial.println(">> FINAL MISSION COMPLETE!");
-          while (1) {
-            digitalWrite(15, 1); digitalWrite(4, 1); digitalWrite(5, 1); delay(300);
-            digitalWrite(15, 0); digitalWrite(4, 0); digitalWrite(5, 0); delay(300);
-          }
+          runState = FINAL_UTURN; 
+          resetTurnStop();
+          motorA(TURN_PWM); motorB(-TURN_PWM);
+          Serial.println(">> FINAL MISSION COMPLETE! DOING U-TURN");
+          prevMs = now; return;
         }
 
         runState = STRAIGHT_CHECK;
         straightCheckStart = now;
-        motorA(baseSpeed - 30); motorB(baseSpeed - 30); // ลด speed ตอนตรวจ
+        motorA(baseSpeed - 30); motorB(baseSpeed - 30);
         Serial.println(">> STRAIGHT_CHECK");
         prevMs = now; return;
       }
@@ -399,11 +415,10 @@ void loop() {
 
     // ==================== STRAIGHT_CHECK ====================
     case STRAIGHT_CHECK: {
-      motorA(baseSpeed - 30); motorB(baseSpeed - 30); // ลด speed ตลอด state นี้
+      motorA(baseSpeed - 30); motorB(baseSpeed - 30);
 
       char cp = identifyCheckpoint(n1, n2, n3, n4);
 
-      // ========== Confirmation Logic ==========
       if (cp != '\0') {
         if (cp == pendingCP) {
           cpConfirmCount++;
@@ -414,7 +429,6 @@ void loop() {
       }
 
       if (cpConfirmCount >= CP_CONFIRM_N) {
-        // ยืนยันแล้ว!
         char confirmedCP = pendingCP;
         cpConfirmCount = 0;
         pendingCP = '\0';
@@ -454,7 +468,6 @@ void loop() {
         prevMs = now; return;
       }
 
-      // timeout → ทางตันธรรมดา
       if (now - straightCheckStart >= STRAIGHT_CHECK_MS) {
         cpConfirmCount = 0; pendingCP = '\0'; 
         if (currentMode == MODE_EXPLORE) path_map += 'U';
@@ -482,20 +495,15 @@ void loop() {
 
     // ==================== UTURNTHEN ====================
     case UTURNTHEN: {
-      
       motorA(TURN_PWM); motorB(-TURN_PWM);
-      // --- กรณีที่เจอครบ 3 จุดแล้ว (stopAfterUTurn == true) ---
       if (stopAfterUTurn) {
-        if (now - actionStartMs >= 900) {
-          motorA(0); motorB(0); // เปลี่ยนจาก 10 เป็น 0 ให้มอเตอร์เบรกสนิท
+        if (now - actionStartMs >= 800) {
+          motorA(0); motorB(0);
           motorA(0); motorB(0);
           Serial.println(">> STOP (all checkpoints found, after 1s U-Turn)");
 
-          // หยุดกระพริบ LED และรอ 3 วินาที
           unsigned long blinkStart = millis();
           while (millis() - blinkStart < 3000) {
-            Serial.print("wait");
-            Serial.println(millis() - blinkStart);
             motorA(0); motorB(0);
             digitalWrite(15, 1); digitalWrite(4, 1); digitalWrite(5, 1); delay(200);
             digitalWrite(15, 0); digitalWrite(4, 0); digitalWrite(5, 0); delay(200);
@@ -503,31 +511,26 @@ void loop() {
 
           Serial.print("Raw Path: "); Serial.println(path_map);
 
+          // แก้ไขวิธีต่อเส้นทางของ รอบ 2 ให้คำนวณทิศทางหัวรถจริงๆ
           String simA = extractJunctions(simplifyPath(stripCheckpoints(rawPathToA)));
           String simB = extractJunctions(simplifyPath(stripCheckpoints(rawPathToB)));
           String simC = extractJunctions(simplifyPath(stripCheckpoints(rawPathToC)));
 
           String seg1 = simA;
-          int pAB = commonPrefixLen(simA, simB);
-          String seg2 = reversePath(simA.substring(pAB)) + simB.substring(pAB);
-          int pBC = commonPrefixLen(simB, simC);
-          String seg3 = reversePath(simB.substring(pBC)) + simC.substring(pBC);
+          String seg2 = buildSegment(simA, simB);
+          String seg3 = buildSegment(simB, simC);
           String seg4 = reversePath(simC);
 
           optJunctions = seg1 + seg2 + seg3 + seg4;
           Serial.print("Round2 Junctions: "); Serial.println(optJunctions);
 
-          // ==========================================
-          // แก้ไข: คำนวณเส้นทางกลับบ้านแบบยุบ Path
-          // ==========================================
           String simHome = simplifyPath(stripCheckpoints(path_map));
           returnJunctionsStr = extractJunctions(reversePath(simHome));
           returnJunctionIndex = 0;
           Serial.print("Return Path (Optimized): "); Serial.println(returnJunctionsStr);
-          // ==========================================
 
           currentMode = MODE_RETURN;
-          nearHome = (returnJunctionsStr.length() == 0); // ถ้าถึงบ้านแล้ว(ไม่มีแยก) ให้ nearHome ทันที
+          nearHome = (returnJunctionsStr.length() == 0);
           checkpointCount = 0; stopAfterUTurn = false;
           foundA = false; foundB = false; foundC = false;
           confirmLow = 0; confirmHigh = 0;
@@ -539,7 +542,6 @@ void loop() {
           prevMs = millis(); return;
         }
       } 
-      // --- กรณีที่เจอจุดที่ 1 หรือ 2 (ยังไม่ครบ 3 จุด) ---
       else {
         motorA(TURN_PWM); motorB(-TURN_PWM);
         if (checkTurnStop(centerHigh, now) && (now-actionStartMs) >= 700) {
@@ -548,15 +550,22 @@ void loop() {
           resetPID();
         }
       }
-      
       prevMs = now; return;
     }
 
     // ==================== HOME_UTURN ====================
     case HOME_UTURN: {
       motorA(TURN_PWM); motorB(-TURN_PWM);
-      if (checkTurnStop(centerHigh, now)) {
+      if (checkTurnStop(centerHigh, now) && (now-actionStartMs) >= 700 ) {
         motorA(0); motorB(0);
+
+        Serial.println(">> ARRIVED HOME, WAIT 3 SECONDS BEFORE ROUND 2");
+        unsigned long blinkStart = millis();
+        while (millis() - blinkStart < 3000) {
+          motorA(0); motorB(0); 
+          digitalWrite(15, 1); digitalWrite(5, 1); digitalWrite(4, 1); delay(200);
+          digitalWrite(15, 0); digitalWrite(5, 0); digitalWrite(4, 0); delay(200);
+        }
 
         currentMode = MODE_SECOND;
         optJunctionIndex = 0; checkpointCount = 0;
@@ -565,6 +574,23 @@ void loop() {
         runState = FOLLOW;
         resetPID();
         Serial.println(">> START SECOND RUN (Optimized)");
+      }
+      prevMs = now; return;
+    }
+
+    // ==================== FINAL_UTURN ====================
+    case FINAL_UTURN: {
+      motorA(TURN_PWM); motorB(-TURN_PWM);
+      if (checkTurnStop(centerHigh, now)) {
+        motorA(0); motorB(0);
+        Serial.println(">> FINAL U-TURN DONE! BLINKING SEQUENTIALLY FOREVER");
+        
+        while (1) {
+          motorA(0); motorB(0);
+          digitalWrite(15, 1); delay(200); digitalWrite(15, 0); delay(100);
+          digitalWrite(5, 1);  delay(200); digitalWrite(5, 0);  delay(100);
+          digitalWrite(4, 1);  delay(200); digitalWrite(4, 0);  delay(100);
+        }
       }
       prevMs = now; return;
     }
@@ -628,6 +654,8 @@ void loop() {
       motorA(TURN_PWM); motorB(-TURN_PWM);
       if (checkTurnStop(centerHigh, now)) {
         motorA(0); motorB(0); runState = FOLLOW; resetPID();
+      }else{
+        Serial.println(checkTurnStop( centerHigh, now) );
       }
       prevMs = now; return;
     }
