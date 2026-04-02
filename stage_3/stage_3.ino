@@ -311,7 +311,8 @@ void loop() {
 
   int n1 = readNorm(S1, 0); int n2 = readNorm(S2, 1);
   int n3 = readNorm(S3, 2); int n4 = readNorm(S4, 3);
-
+  
+  
   if ((n1 == 0 || n2 == 0 || n3 == 0 || n4 == 0) && glich_zero_count == 0) {
     digitalWrite(15, 1); digitalWrite(5, 1); digitalWrite(4, 1);
     delay(100);
@@ -336,7 +337,10 @@ void loop() {
     case FOLLOW: {
       confirmLow  = allLow  ? (confirmLow + 1)  : 0;
       confirmHigh = allHigh ? (confirmHigh + 1) : 0;
-
+      Serial.print(n1); Serial.print(" ");
+      Serial.print(n2);Serial.print(" ");
+      Serial.print(n3);Serial.print(" ");
+      Serial.println(n4);
       if (confirmHigh >= CONFIRM_N) {
         confirmLow = confirmHigh = 0;
         actionStartMs = now;
@@ -384,7 +388,8 @@ void loop() {
         prevMs = now; return;
       }
 
-      if (confirmLow >= 5) {
+      if (confirmLow >= 30) {
+        
         confirmLow = confirmHigh = 0;
 
         if (currentMode == MODE_RETURN && nearHome) {
